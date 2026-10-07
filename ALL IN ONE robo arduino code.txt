@@ -1,0 +1,167 @@
+#include <SoftwareSerial.h>
+
+SoftwareSerial BT_Serial(2, 3); // RX, TX
+
+// Motor driver pins
+#define enA 10
+#define in1 9
+#define in2 8
+#define in3 7
+#define in4 6
+#define enB 5
+
+// Other sensors / servo
+#define servo A4
+#define R_S A0
+#define L_S A1
+#define echo A2
+#define trigger A3
+
+// Variables
+int distance_L, distance_F = 30, distance_R;
+long distance;
+int set = 20;
+
+int bt_data;
+int Speed = 130;
+int mode = 0;   // 0 = Manual / Voice, 1 = Line follow, 2 = Obstacle Avoid
+
+void setup() {
+  pinMode(R_S, INPUT);
+  pinMode(L_S, INPUT);
+  pinMode(echo, INPUT);
+  pinMode(trigger, OUTPUT);
+  pinMode(enA, OUTPUT);
+  pinMode(in1, OUTPUT);
+  pinMode(in2, OUTPUT);
+  pinMode(in3, OUTPUT);
+  pinMode(in4, OUTPUT);
+  pinMode(enB, OUTPUT);
+  pinMode(servo, OUTPUT);
+
+  Serial.begin(9600);
+  BT_Serial.begin(9600);
+
+  // Servo initialization sweep
+  for (int angle = 70; angle <= 140; angle += 5) servoPulse(servo, angle);
+  for (int angle = 140; angle >= 0; angle -= 5) servoPulse(servo, angle);
+  for (int angle = 0; angle <= 70; angle += 5) servoPulse(servo, angle);
+  delay(500);
+}
+
+void loop() {
+  // Bluetooth / Voice data receive
+  if (BT_Serial.available() > 0) {
+    bt_data = BT_Serial.read();
+    Serial.print("BT / Voice Data: ");
+    Serial.println(bt_data);
+
+    if (bt_data > 20) Speed = bt_data; // speed control by app slider etc.
+  }
+
+  // Mode select
+  if (bt_data == 8) { mode = 0; Stop(); }         // Manual / Voice mode
+  else if (bt_data == 9) { mode = 1; Speed = 130; }  // Line Follow
+  else if (bt_data == 10) { mode = 2; Speed = 255; } // Obstacle Avoid
+
+  analogWrite(enA, Speed);
+  analogWrite(enB, Speed);
+
+  // -------- Manual / Voice Mode --------
+  if (mode == 0) {
+    if (bt_data == 1) forword();
+    else if (bt_data == 2) backword();
+    else if (bt_data == 3) turnLeft();
+    else if (bt_data == 4) turnRight();
+    else if (bt_data == 5) Stop();
+    else if (bt_data == 6) { turnLeft(); delay(400); Stop(); }
+    else if (bt_data == 7) { turnRight(); delay(400); Stop(); }
+  }
+
+  // -------- Line Following Mode --------
+  if (mode == 1) {
+    if ((digitalRead(R_S) == 0) && (digitalRead(L_S) == 0)) forword();
+    else if ((digitalRead(R_S) == 1) && (digitalRead(L_S) == 0)) turnRight();
+    else if ((digitalRead(R_S) == 0) && (digitalRead(L_S) == 1)) turnLeft();
+    else Stop();
+  }
+
+  // -------- Obstacle Avoid Mode --------
+  if (mode == 2) {
+    distance_F = Ultrasonic_read();
+    Serial.print("Distance: ");
+    Serial.println(distance_F);
+    if (distance_F > set) forword();
+    else Check_side();
+  }
+
+  delay(10);
+}
+
+// -------- Servo control --------
+void servoPulse (int pin, int angle) {
+  int pwm = (angle * 11) + 500;
+  digitalWrite(pin, HIGH);
+  delayMicroseconds(pwm);
+  digitalWrite(pin, LOW);
+  delay(50);
+}
+
+// -------- Ultrasonic Sensor --------
+long Ultrasonic_read() {
+  digitalWrite(trigger, LOW);
+  delayMicroseconds(2);
+  digitalWrite(trigger, HIGH);
+  delayMicroseconds(10);
+  distance = pulseIn(echo, HIGH);
+  return distance / 29 / 2;
+}
+
+// -------- Obstacle Checking --------
+void compareDistance() {
+  if (distance_L > distance_R) turnLeft();
+  else if (distance_R > distance_L) turnRight();
+  else { backword(); delay(300); turnRight(); delay(600); }
+}
+
+void Check_side() {
+  Stop();
+  delay(100);
+  for (int angle = 70; angle <= 140; angle += 5) servoPulse(servo, angle);
+  delay(300);
+  distance_L = Ultrasonic_read();
+  delay(100);
+  for (int angle = 140; angle >= 0; angle -= 5) servoPulse(servo, angle);
+  delay(500);
+  distance_R = Ultrasonic_read();
+  delay(100);
+  for (int angle = 0; angle <= 70; angle += 5) servoPulse(servo, angle);
+  delay(300);
+  compareDistance();
+}
+
+// -------- Motor Movement --------
+void forword() {
+  digitalWrite(in1, HIGH); digitalWrite(in2, LOW);
+  digitalWrite(in3, LOW);  digitalWrite(in4, HIGH);
+}
+
+void backword() {
+  digitalWrite(in1, LOW); digitalWrite(in2, HIGH);
+  digitalWrite(in3, HIGH); digitalWrite(in4, LOW);
+}
+
+void turnRight() {
+  digitalWrite(in1, LOW); digitalWrite(in2, HIGH);
+  digitalWrite(in3, LOW); digitalWrite(in4, HIGH);
+}
+
+void turnLeft() {
+  digitalWrite(in1, HIGH); digitalWrite(in2, LOW);
+  digitalWrite(in3, HIGH); digitalWrite(in4, LOW);
+}
+
+void Stop() {
+  digitalWrite(in1, LOW); digitalWrite(in2, LOW);
+  digitalWrite(in3, LOW); digitalWrite(in4, LOW);
+}
